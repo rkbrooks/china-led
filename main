@@ -1,0 +1,181 @@
+// This is the china lights code.  Target ESP8266-01.
+// Emits a carrierless bitstream based on a webcall,
+// designed to emulate a TL1838 and control many of
+// the china export led lights.
+//
+// Ryan Brooks, ryan@hack.net
+// 20-dec-2017
+
+#include <ESP8266WiFi.h>
+#include <WiFiClient.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266mDNS.h>
+
+//#define DEBUG         // Set this to debug the bit banging, which will also mess up the timing.
+#define outputpin 2   // port to stream from
+
+#define sendMark  digitalWrite(outputpin,1); delayMicroseconds(onebit);  digitalWrite(outputpin,0); delayMicroseconds(halfbit); //1
+#define sendSpace digitalWrite(outputpin,1); delayMicroseconds(halfbit); digitalWrite(outputpin,0); delayMicroseconds(halfbit); //0
+#define goHi digitalWrite(outputpin,1);
+#define goLo digitalWrite(outputpin,0);
+
+
+MDNSResponder mdns;
+
+const char* ssid     = "YOUR-SSID";          //Fill it in, yo. CONFIGURE THIS
+const char* password = "YOUR-WIFI-PASSWORD";
+
+ESP8266WebServer server(80);
+String webPage = "";
+
+int halfbit =  560;     // Try 600
+int onebit  =  1700;    // Try 1800
+
+// initialization stuff in setup()
+
+void setup() {
+  
+    pinMode(outputpin, OUTPUT);
+    goHi
+    
+    Serial.begin(115200);
+    delay(10);
+    Serial.println();
+    Serial.print("Connecting... ");
+    
+    WiFi.begin(ssid, password);
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      Serial.print(".");
+    }
+    Serial.println("");
+    Serial.println("WiFi connected");  
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+
+    if (mdns.begin("esp8266", WiFi.localIP())) {
+      Serial.println("MDNS started");
+    }
+    
+    server.begin();
+    
+    Serial.println("Web server started");
+    
+    server.on("/do", handleArgs);  // URL will be http://{IP}/do?opcode=operand
+                                   // setmark, setspace, send
+                                   // see handleArgs below
+  
+}
+
+// all commands I've seen start with this string
+
+void sendPreamble()
+{
+  
+   sendSpace
+   sendSpace
+   sendSpace
+   sendSpace
+   sendSpace
+   sendSpace
+   sendSpace
+   sendSpace
+
+   sendMark
+   sendMark
+   sendMark
+   sendMark
+
+   sendSpace
+   sendMark
+   sendMark
+   
+}
+
+// emit a serial train
+
+void sendIt(String serialTrain)
+{
+  unsigned int i;
+  Serial.print("Ready to send string: ");
+  Serial.println(serialTrain);
+  
+   //attention
+                 
+   goLo
+   delayMicroseconds(9000);
+   goHi
+   delayMicroseconds(4500);
+   goLo
+   delayMicroseconds(halfbit);
+   
+   sendPreamble();
+
+   // The loop timing below is critical.
+   
+   for(i=0; i<serialTrain.length(); i++) {
+      #ifdef DEBUG
+      Serial.print(serialTrain.charAt(i));
+      Serial.print(" ");
+      #endif
+      if(serialTrain.charAt(i) == 'M') {
+        sendMark
+      }
+      if(serialTrain.charAt(i) == 'S') {
+        sendSpace
+      }
+   }
+   Serial.println();
+}
+
+// handler for web args
+
+void handleArgs() { 
+
+    String message = "Number of arguments received: ";
+
+    message += server.args();                   //Get number of parameters
+    message += "\n";                            //Add a new line
+
+    for (int i = 0; i < server.args(); i++) {
+      message +="Arg " + (String)i + " = ";     //Include the current iteration value
+      message += server.argName(i) +": ";       //Get the name of the parameter
+      message += server.arg(i) + "\n";          //Get the value of the parameter
+
+      if(server.argName(i) =="setspace") {
+          halfbit = server.arg(i).toInt();
+          Serial.print("Setting interbit length to ");
+          Serial.print(halfbit);
+          Serial.println("us");
+      }
+      
+      if(server.argName(i) == "setmark") {
+          onebit = server.arg(i).toInt();
+          Serial.print("Setting wholebit length to ");
+          Serial.print(onebit);
+          Serial.println("us");
+      }
+
+      if(server.argName(i) == "send") {
+          sendIt(server.arg(i));
+          Serial.println("Done.");
+      }
+      
+      
+    } 
+
+    server.send(200, "text/plain", message);       //Response to the HTTP request, no error check.
+}
+
+// main event loop
+
+void loop() {
+  
+   server.handleClient();
+   #ifdef DEBUG
+   Serial.println(".");
+   delay(10);
+   #endif
+
+}
+
